@@ -1,291 +1,258 @@
 import * as React from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-  PokemonDetail,
-  PokemonListItem,
-  PokemonListResponse,
-} from "../types/pokemon";
-import { getPokemonsList } from "../utils/getPokemonsList";
-import { getPokemonById } from "../utils/getPokemonById";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+import { Pokemon, PokemonResponse } from "../types/pokemon";
 
-interface LoaderData {
-  pokemonDetails: PokemonDetail[];
+export interface LoaderData {
+  pokemons: Pokemon[];
   nextUrl: string | null;
 }
 
-export const Route = createFileRoute("/")({
-  component: HomeComponent,
-  loader: async (): Promise<LoaderData> => {
-    // Fetch the initial list of Pokemon
-    const data = await getPokemonsList(20, 0);
+// Helper function to get color classes based on Pokemon type
+function getTypeColor(type: string): string {
+  const typeColors: Record<string, string> = {
+    normal: "bg-gray-400",
+    fire: "bg-orange-500",
+    water: "bg-blue-500",
+    electric: "bg-yellow-500",
+    grass: "bg-green-500",
+    ice: "bg-blue-300",
+    fighting: "bg-red-700",
+    poison: "bg-purple-500",
+    ground: "bg-yellow-700",
+    flying: "bg-indigo-300",
+    psychic: "bg-pink-500",
+    bug: "bg-lime-500",
+    rock: "bg-yellow-600",
+    ghost: "bg-purple-700",
+    dragon: "bg-indigo-600",
+    dark: "bg-gray-700",
+    steel: "bg-gray-500",
+    fairy: "bg-pink-300",
+  };
 
-    // Fetch details for each Pokemon
-    const detailsPromises = data.results.map(
-      async (pokemon: PokemonListItem) => {
-        const detailResponse = await getPokemonById(pokemon.url);
-        return detailResponse;
-      }
+  return typeColors[type] || "bg-gray-400";
+}
+
+const fetchPokemonTypes = async (url: string) => {
+  const response = await fetch(url);
+  const data = await response.json();
+  return data.types.map((type: { type: { name: string } }) => type.type.name);
+};
+
+export const Route = createFileRoute("/")({
+  component: HomeRoute,
+  loader: async () => {
+    const response = await fetch("https://pokeapi.co/api/v2/pokemon/?limit=20");
+    const data: PokemonResponse = await response.json();
+
+    // Extract IDs and fetch additional data for each Pokemon
+    const pokemons = await Promise.all(
+      data.results.map(async (pokemon) => {
+        const id = pokemon.url
+          .replace("https://pokeapi.co/api/v2/pokemon/", "")
+          .replace("/", "");
+
+        // Get Pokemon types
+        const types = await fetchPokemonTypes(pokemon.url);
+
+        return {
+          ...pokemon,
+          id: parseInt(id),
+          types,
+        };
+      })
     );
 
-    const pokemonDetails = await Promise.all(detailsPromises);
-
     return {
-      pokemonDetails,
+      pokemons,
       nextUrl: data.next,
     };
   },
-  staleTime: Infinity,
 });
 
-function HomeComponent() {
-  const { pokemonDetails: initialPokemonDetails, nextUrl: initialNextUrl } =
+function HomeRoute() {
+  const { pokemons: initialPokemons, nextUrl: initialNextUrl } =
     Route.useLoaderData();
-  const [pokemonDetails, setPokemonDetails] = React.useState<PokemonDetail[]>(
-    initialPokemonDetails
-  );
-  const [nextUrl, setNextUrl] = React.useState<string | null>(initialNextUrl);
-  const [isLoading, setIsLoading] = React.useState(false);
-  const loadingRef = React.useRef<HTMLDivElement>(null);
 
-  const loadMorePokemon = React.useCallback(async () => {
-    if (!nextUrl || isLoading) return;
+  const [pokemons, setPokemons] = useState<
+    Array<Pokemon & { types?: string[] }>
+  >(initialPokemons);
+  const [nextUrl, setNextUrl] = useState<string | null>(initialNextUrl);
+  const [isLoading, setIsLoading] = useState(false);
+  const [allLoaded, setAllLoaded] = useState(false);
 
-    try {
-      setIsLoading(true);
+  const observerTarget = useRef(null);
 
-      // Fetch the next page of Pokemon
-      const response = await fetch(nextUrl);
-      if (!response.ok) {
-        throw new Error("Failed to fetch more Pokémon");
-      }
+  // Function to capitalize first letter of a string
+  const capitalize = (str: string) => {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  };
 
-      const data = (await response.json()) as PokemonListResponse;
-
-      // Fetch details for each Pokemon
-      const detailsPromises = data.results.map(
-        async (pokemon: PokemonListItem) => {
-          const detailResponse = await getPokemonById(pokemon.url);
-          return detailResponse;
-        }
-      );
-
-      const newPokemonDetails = await Promise.all(detailsPromises);
-
-      // Update state with new Pokemon
-      setPokemonDetails((prev) => [...prev, ...newPokemonDetails]);
-      setNextUrl(data.next);
-    } catch (error) {
-      console.error("Error loading more Pokemon:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [nextUrl, isLoading]);
-
-  // Set up intersection observer to detect when user scrolls to the bottom
-  React.useEffect(() => {
+  useEffect(() => {
     const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && !isLoading) {
-          loadMorePokemon();
+      async (entries) => {
+        const [entry] = entries;
+        if (entry.isIntersecting && nextUrl && !isLoading && !allLoaded) {
+          setIsLoading(true);
+          try {
+            const response = await fetch(nextUrl);
+            const data: PokemonResponse = await response.json();
+
+            // Extract IDs and fetch additional data for each Pokemon
+            const newPokemons = await Promise.all(
+              data.results.map(async (pokemon) => {
+                const id = pokemon.url
+                  .replace("https://pokeapi.co/api/v2/pokemon/", "")
+                  .replace("/", "");
+
+                // Get Pokemon types
+                const types = await fetchPokemonTypes(pokemon.url);
+
+                return {
+                  ...pokemon,
+                  id: parseInt(id),
+                  types,
+                };
+              })
+            );
+
+            setPokemons((prevPokemons) => [...prevPokemons, ...newPokemons]);
+            setNextUrl(data.next);
+            if (!data.next) {
+              setAllLoaded(true);
+            }
+          } catch (error) {
+            console.error("Error loading more Pokemon:", error);
+          } finally {
+            setIsLoading(false);
+          }
         }
       },
-      { threshold: 0.5 }
+      { threshold: 1.0 }
     );
 
-    if (loadingRef.current) {
-      observer.observe(loadingRef.current);
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
     }
 
     return () => {
-      observer.disconnect();
+      if (observerTarget.current) {
+        observer.unobserve(observerTarget.current);
+      }
     };
-  }, [loadMorePokemon, isLoading]);
+  }, [nextUrl, isLoading, allLoaded]);
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1
-        style={{
-          fontSize: "24px",
-          fontWeight: "bold",
-          marginBottom: "20px",
-          textAlign: "center",
-        }}
-      >
-        Pokémon List
-      </h1>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
-          gap: "20px",
-        }}
-      >
-        {pokemonDetails.map((pokemon) => (
-          <Link
-            key={pokemon.id}
-            to="/pokemon/$pokemonId"
-            params={{ pokemonId: pokemon.id.toString() }}
-            style={{
-              textDecoration: "none",
-              color: "inherit",
-              display: "block",
-              cursor: "pointer",
-            }}
-          >
-            <div
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: "8px",
-                overflow: "hidden",
-                boxShadow: "0 2px 5px rgba(0,0,0,0.1)",
-                transition: "transform 0.2s ease, box-shadow 0.2s ease",
-                height: "100%",
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.transform = "translateY(-5px)";
-                e.currentTarget.style.boxShadow = "0 5px 15px rgba(0,0,0,0.2)";
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.transform = "translateY(0)";
-                e.currentTarget.style.boxShadow = "0 2px 5px rgba(0,0,0,0.1)";
-              }}
-            >
-              <div
-                style={{
-                  backgroundColor: "#f0f0f0",
-                  padding: "15px",
-                  display: "flex",
-                  justifyContent: "center",
-                  position: "relative",
-                }}
-              >
-                <img
-                  src={
-                    pokemon.sprites.other["official-artwork"].front_default ||
-                    pokemon.sprites.front_default
-                  }
-                  alt={pokemon.name}
-                  style={{
-                    height: "150px",
-                    width: "150px",
-                    objectFit: "contain",
-                  }}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "10px",
-                    right: "10px",
-                    backgroundColor: "#ffcc00",
-                    color: "#333",
-                    padding: "2px 6px",
-                    borderRadius: "10px",
-                    fontSize: "12px",
-                    fontWeight: "bold",
-                  }}
-                >
-                  #{pokemon.id}
+    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-200">
+      {/* Pokedex Header */}
+      <header className="bg-gradient-to-b from-red-600 to-red-500 shadow-lg">
+        <div className="container mx-auto px-4 py-6">
+          <div className="flex items-center">
+            <div className="mr-4 flex items-center">
+              {/* Pokeball icon */}
+              <div className="relative w-12 h-12">
+                <div className="absolute inset-0 bg-white rounded-full"></div>
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full h-[2px] bg-gray-800"></div>
                 </div>
-              </div>
-
-              <div style={{ padding: "15px" }}>
-                <h2
-                  style={{
-                    fontSize: "18px",
-                    fontWeight: "bold",
-                    marginBottom: "10px",
-                    textTransform: "capitalize",
-                  }}
-                >
-                  {pokemon.name}
-                </h2>
-
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "5px",
-                    marginBottom: "10px",
-                  }}
-                >
-                  {pokemon.types.map((type) => (
-                    <span
-                      key={type.type.name}
-                      style={{
-                        padding: "3px 8px",
-                        fontSize: "12px",
-                        borderRadius: "16px",
-                        color: "white",
-                        backgroundColor: "#3b82f6",
-                      }}
-                    >
-                      {type.type.name}
-                    </span>
-                  ))}
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "10px",
-                    fontSize: "14px",
-                  }}
-                >
-                  <div>Height: {pokemon.height / 10}m</div>
-                  <div>Weight: {pokemon.weight / 10}kg</div>
-                </div>
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-gray-800"></div>
+                <div className="absolute top-0 left-0 w-full h-1/2 bg-red-500 rounded-t-full"></div>
               </div>
             </div>
-          </Link>
-        ))}
-      </div>
-
-      {/* Loading indicator and intersection observer target */}
-      <div
-        ref={loadingRef}
-        style={{
-          padding: "20px",
-          textAlign: "center",
-          display: nextUrl ? "block" : "none",
-        }}
-      >
-        {isLoading ? (
-          <div
-            style={{
-              display: "inline-block",
-              width: "40px",
-              height: "40px",
-              border: "3px solid #f3f3f3",
-              borderTop: "3px solid #3b82f6",
-              borderRadius: "50%",
-              animation: "spin 1s linear infinite",
-            }}
-          >
-            <style>{`
-              @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-              }
-            `}</style>
+            <div>
+              <h1 className="text-3xl font-extrabold text-white">Pokédex</h1>
+              <p className="text-red-100">Discover and explore Pokémon</p>
+            </div>
+            <div className="ml-auto flex space-x-2">
+              {/* Decorative lights */}
+              <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse"></div>
+              <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse delay-75"></div>
+              <div className="w-3 h-3 rounded-full bg-green-400 animate-pulse delay-150"></div>
+            </div>
           </div>
-        ) : (
-          <div>Scroll for more Pokémon</div>
-        )}
-      </div>
-
-      {!nextUrl && !isLoading && pokemonDetails.length > 20 && (
-        <div
-          style={{
-            padding: "20px",
-            textAlign: "center",
-            fontWeight: "bold",
-          }}
-        >
-          You've caught 'em all! No more Pokémon to load.
         </div>
-      )}
+      </header>
+
+      <main className="container mx-auto px-4 py-8">
+        {/* Pokemon Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+          {pokemons.map((pokemon) => (
+            <Link
+              key={pokemon.id}
+              to="/pokemon/$pokemonId"
+              params={{ pokemonId: pokemon.id?.toString() || "" }}
+              className="group"
+            >
+              <div className="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden transform hover:-translate-y-1 border-2 border-gray-200 h-full flex flex-col">
+                {/* Pokemon ID Badge */}
+                <div className="absolute top-3 right-3 bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs font-bold">
+                  #{pokemon.id?.toString().padStart(3, "0")}
+                </div>
+                
+                {/* Pokemon Image */}
+                <div className="p-6 flex justify-center items-center bg-gradient-to-br from-gray-50 to-gray-100 transition-colors group-hover:from-gray-100 group-hover:to-gray-200">
+                  <img
+                    src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${pokemon.id}.png`}
+                    alt={pokemon.name}
+                    className="h-36 w-36 object-contain transform transition-transform group-hover:scale-110"
+                  />
+                </div>
+                
+                {/* Pokemon Info */}
+                <div className="p-4 flex-grow">
+                  <h2 className="text-xl font-bold text-gray-800 mb-2 capitalize">
+                    {pokemon.name}
+                  </h2>
+                  
+                  {/* Pokemon Types */}
+                  {pokemon.types && (
+                    <div className="flex flex-wrap gap-2">
+                      {pokemon.types.map((type) => (
+                        <span
+                          key={type}
+                          className={`${getTypeColor(type)} px-3 py-1 rounded-full text-white text-xs font-medium`}
+                        >
+                          {capitalize(type)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                {/* View Details Button */}
+                <div className="px-4 pb-4 mt-auto">
+                  <div className="bg-red-500 hover:bg-red-600 text-white text-center py-2 rounded-lg font-medium transition-colors group-hover:bg-red-600">
+                    View Details
+                  </div>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+
+        {/* Loading indicator/sentinel */}
+        <div ref={observerTarget} className="py-8 flex justify-center">
+          {isLoading ? (
+            <div className="flex flex-col items-center">
+              <div className="relative w-16 h-16">
+                <div className="w-full h-full rounded-full border-4 border-gray-200 border-t-red-500 animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                    <div className="w-4 h-4 bg-red-500 rounded-full"></div>
+                  </div>
+                </div>
+              </div>
+              <p className="mt-4 text-gray-700">Loading more Pokémon...</p>
+            </div>
+          ) : allLoaded ? (
+            <div className="text-center p-4 bg-gray-100 rounded-lg shadow-inner">
+              <p className="text-gray-700 font-medium">All Pokémon loaded!</p>
+              <p className="text-gray-500 text-sm mt-1">You've caught 'em all</p>
+            </div>
+          ) : null}
+        </div>
+      </main>
     </div>
   );
 }
