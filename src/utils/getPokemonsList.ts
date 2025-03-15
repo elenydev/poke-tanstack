@@ -14,5 +14,6 @@ const retrievePokemonsList = async (limit: number = 20, offset: number = 0) => {
     throw error;
   }
 }
-  
+
+// In order to enable caching - we need to use RSC
 export const getPokemonsList = cache(retrievePokemonsList);

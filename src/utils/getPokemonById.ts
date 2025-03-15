@@ -16,4 +16,5 @@ const retrievePokemonById = async (pokemonUrl: string) => {
   }
 }
 
+// In order to enable caching - we need to use RSC
 export const getPokemonById = cache(async (pokemonUrl: string) => await retrievePokemonById(pokemonUrl));
